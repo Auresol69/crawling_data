@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL Parser Form</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: 48px auto;
+      padding: 24px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 20px;
+    }
+
+    .field {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    button {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    .error {
+      margin-top: 14px;
+      color: #b91c1c;
+      font-size: 14px;
+    }
+
+    .results {
+      margin-top: 18px;
+    }
+
+    .table-wrap {
+      margin-top: 12px;
+      overflow-x: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+
+    .table-wrap table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .table-wrap th,
+    .table-wrap td {
+      border: 1px solid #e5e7eb;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Submit URL</h1>
+    <form action="/" method="POST">
+      <div class="field">
+        <label for="url">URL</label>
+        <input
+          id="url"
+          name="url"
+          type="url"
+          placeholder="https://example.com"
+          value="{{ request.form.get('url', '') }}"
+          required
+        >
+      </div>
+
+      <div class="field">
+        <label for="parser">Parser</label>
+        <select id="parser" name="parser" required>
+          <option value="lxml" {% if request.form.get('parser', 'lxml') == 'lxml' %}selected{% endif %}>lxml</option>
+          <option value="html5lib" {% if request.form.get('parser') == 'html5lib' %}selected{% endif %}>html5lib</option>
+        </select>
+      </div>
+
+      <button type="submit">Submit</button>
+    </form>
+
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+
+    {% if tables %}
+      <section class="results">
+        <h2>Tables</h2>
+        {% for table in tables %}
+          <div class="table-wrap">{{ table | safe }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
