@@ -6,10 +6,11 @@ import io
 import csv
 import concurrent.futures
 import os
+import time
 
 app = Flask(__name__)
 
-def crawl_data(url="https://giavang.org/trong-nuoc/sjc/lich-su/2010-09-15.html", parser_type="lxml"):
+def crawl_data(url="https://giavang.org/trong-nuoc/sjc/lich-su/2010-09-15.html", parser_type="lxml"): 
     try:
         response = requests.get(url, timeout=15)
     except requests.RequestException:
@@ -64,7 +65,7 @@ def crawl_data(url="https://giavang.org/trong-nuoc/sjc/lich-su/2010-09-15.html",
         df["Thời gian"].astype(str).str.strip(), format="%H:%M:%S %d/%m/%Y", errors="coerce"
     ).dt.strftime("%d/%m/%Y")
     
-    df.loc[df['Loại vàng'].astype(str).str.contains(" ", na = False), 'Loại vàng'] = 'PNJ'
+    df.loc[~df['Loại vàng'].str.contains('pnj|sjc', case=False, na=False), 'Loại vàng'] = 'PNJ'
 
     df.loc[df['Khu vực'].astype(str).str.contains("Giá vàng nữ trang", na = False), 'Khu vực'] = 'TPHCM'
 
@@ -80,7 +81,7 @@ def single_day(day,gold_type):
 
         if df is not None and not df.empty:
             y, m, d = day.split('-')
-            folder_path = f"PipelineScraping/tables/{gold_type}/{y}/{m}"
+            folder_path = f"./tables/{gold_type}/{y}/{m}"
 
             os.makedirs(folder_path, exist_ok=True)
             df.to_csv(f"{folder_path}/{d}.csv", index=False)
@@ -90,15 +91,21 @@ def single_day(day,gold_type):
         print(f"{e} Khong co du lieu cho ngay {day}")
 
 
-def multi_thread(gold_type, startDate="2026-03-01", endDate="2026-03-10"):
+def multi_thread(gold_type, startDate="2016-03-01", endDate="2026-03-01"):
+    start_time = time.time()
     data_list = pd.date_range(start=startDate,end=endDate, freq='D')
     list_str_days = data_list.strftime('%Y-%m-%d').tolist()
 
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # Để ThreadPoolExecutor tự quyết định số luồng tối ưu.
+    # Đây là tác vụ I/O-bound (chờ mạng), không phải CPU-bound,
+    # nên GPU không giúp tăng tốc.
+    with concurrent.futures.ThreadPoolExecutor() as executor:
         for day in list_str_days:
             executor.submit(single_day, day, gold_type)
+    end_time = time.time()
 
+    print(f"Thoi gian crawl data: {end_time - start_time} giay")
 
         
 
@@ -124,5 +131,6 @@ def index():
     return render_template("index.html", tables=tables, error=error)
 
 if __name__ == '__main__':
-    multi_thread(startDate="2010-03-01",endDate="2010-03-31", gold_type="sjc")
+    # multi_thread(startDate="2015-03-01",endDate="2025-03-31", gold_type="sjc")
+    # print(os.cpu_count())
     app.run(host="0.0.0.0", port=5000, debug=True)
