@@ -2,3 +2,5 @@
 tables
 templates
 Makefile
+.env
+scraped_data

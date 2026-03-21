@@ -1,3 +1,5 @@
 tables
 .venv/
 Makefile
+.env
+scraped_data

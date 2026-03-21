@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   crawlgoldapp:
     build: .
@@ -24,16 +22,58 @@ services:
       - TZ="Asia/Ho_Chi_Minh"
       # Biến env này không cần thiết trong các phiên bản new n8n gần đây
       # - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_URL=https://${MY_NGROK_DOMAIN} 
+      - WEBHOOK_URL=https://${MY_NGROK_DOMAIN}
     volumes:
       # data n8n được lưu trong named volume 'n8n_data'
       - n8n_data:/home/node/.n8n
     restart: always
     networks:
       - bot_network
+  
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_service
+    ports:
+      - "11434:11434"
+    restart: always
+    networks:
+      - bot_network
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_NUM_GPU=1
+      - OLLAMA_KEEP_ALIVE=1m
+    # ollama serve &: Khởi động server Ollama ở chế độ chạy ngầm (background)
+    # ollama pull llama3: tự động tải model llama3 về máy ngay lần đầu tiên bạn chạy hệ thống
+    # wait: "Đừng tắt, hãy đợi đến khi các process ngầm (ollama serve) kết thúc". 
+    # Nếu không có wait, container sẽ chạy xong lệnh pull rồi tự đóng luôn vì nó nghĩ nhiệm vụ đã xong
+    entrypoint: bash -c "ollama serve & sleep 5 && ollama pull llama3 && wait"
+
+  # Ngrok Reverse Proxy - Chỉ proxy 1 service
+  ngrok-proxy:
+    image: ngrok/ngrok:latest
+    restart: always
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command:
+      - "http"
+      - "n8n:5678"
+      - "--domain=${MY_NGROK_DOMAIN}"
+    networks:
+      - bot_network  
 
 # Khai báo các "named volumes" được dùng ở trên
 volumes:
   n8n_data: {}
+  ollama: {}
 
 networks:
   bot_network:

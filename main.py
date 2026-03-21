@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, g
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -8,6 +8,10 @@ import os
 import time
 import threading
 import logging
+from ollama import Client
+from functools import wraps
+import json
+from datetime import date
 
 # Cấu hình cơ bản
 logging.basicConfig(
@@ -82,20 +86,26 @@ def crawl_data(url="https://giavang.org/trong-nuoc/sjc/lich-su/2010-09-15.html",
 def single_day(day,gold_type):
     try:
         url = f"https://giavang.org/trong-nuoc/{gold_type}/lich-su/{day}.html"
+        logging.info(f"Fetching data from {url}")
 
         df = crawl_data(url)
 
-
         if df is not None and not df.empty:
+            logging.info(f"Got data for {day}, shape: {df.shape}")
             y, m, d = day.split('-')
-            folder_path = f"./tables/{gold_type}/{y}/{m}"
-
+            folder_path = f"/app/tables/{gold_type}/{y}/{m}"
+            
+            logging.info(f"Creating folder: {folder_path}")
             os.makedirs(folder_path, exist_ok=True)
-            df.to_csv(f"{folder_path}/{d}.csv", index=False)
+            
+            file_path = f"{folder_path}/{d}.csv"
+            logging.info(f"Saving to: {file_path}")
+            df.to_csv(file_path, index=False)
+            logging.info(f"Successfully saved {day}")
         else:
-            print(f"Khong co du lieu cho ngay {day}")
+            logging.warning(f"Khong co du lieu cho ngay {day}")
     except Exception as e:
-        print(f"{e} Khong co du lieu cho ngay {day}")
+        logging.error(f"Error for {day}: {e}", exc_info=True)
 
 
 def multi_thread(gold_type, startDate, endDate):
@@ -135,29 +145,113 @@ def multi_thread(gold_type, startDate, endDate):
 #                 df.to_csv("PipelineScraping/tables/gia_vang.csv",index=False)
 #     return render_template("index.html", tables=tables, error=error)
 
+def call_ollama(prompt, model="llama3"): 
+    client = Client(host='http://ollama:11434')
+
+    response = client.generate(
+        model=model,
+        prompt=prompt,
+        format="json",
+        stream=False
+    )
+    
+    return(response['response'])
+
+# Middleware || Decorator
+def ai_intent_parser(f):
+    @wraps(f) # f = start_crawl()
+    # *args : Không xác định được số lượng phần tử truyền vào vd tinh_tong(1, 2, 3)
+    # **kwargs: Giúp truyền các tham số theo kiểu key=value giống Dictionary vd gioi_thieu(ten="Bao", nganh="Software Engineering")
+    def decorated_function(*args, **kwargs):
+        data = request.get_json(force=True, silent=True)
+        user_input = data.get("user_input")
+        # Solve được việc user gửi kèm dấu ""
+        clean_input = str(user_input).replace('"', "'")
+
+        if user_input:
+            today = date.today()
+
+            instruction = f"""
+            Bạn là một trợ lý trích xuất dữ liệu. Hãy phân tích yêu cầu của người dùng về việc cào giá vàng.
+            Yêu cầu:
+            1. Trả về JSON với 3 key: "start_date", "end_date", "gold_type".
+            2. Định dạng ngày là YYYY-MM-DD. 
+            3. Nếu người dùng nói "hôm nay", hãy dùng ngày {today}.
+            4. "gold_type" chỉ được là "sjc" hoặc "pnj".
+            5. QUAN TRỌNG: Nếu người dùng nhắn tin không liên quan hoặc thiếu thông tin nào, hãy để giá trị đó là null.
+
+            User message: "{clean_input}"
+            """
+
+            raw_ai_out = call_ollama(prompt=instruction)
+            
+            if not raw_ai_out or not raw_ai_out.strip():
+                logging.error("AI trả về chuỗi rỗng")
+                return {
+                    "status": "error",
+                    "message": "AI trả về chuỗi rỗng"
+                }, 500
+            
+            try:
+                parsed = json.loads(raw_ai_out)
+            except json.JSONDecodeError as e:
+                logging.error(f"AI trả về JSON không hợp lệ: {raw_ai_out[:200]}")
+                return {
+                    "status": "error",
+                    "message": f"AI trả về JSON không hợp lệ: {str(e)}"
+                }, 500
+            
+            # Nếu chỉ có start_date, set end_date = start_date
+            if parsed.get("start_date") and not parsed.get("end_date"):
+                parsed["end_date"] = parsed["start_date"]
+                            
+            # Tiêm dữ liệu vào request object để route phía sau sử dụng
+            data.update({
+                "start_date": parsed.get("start_date"),
+                "end_date": parsed.get("end_date"),
+                "gold_type": parsed.get("gold_type")
+            })
+        
+        # Lấy dữ liệu từ data (đã được cập nhật từ AI hoặc từ request)
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        gold_type = data.get("gold_type")
+        callback_url = data.get("callback_url")
+
+        if not all([start_date, end_date, gold_type]):
+            logging.error("Yêu cầu thiếu start_date, end_date, hoặc gold_type")
+            return {
+                "status": "error",
+                "message": "Yêu cầu không hợp lệ. Cần cung cấp đủ start_date, end_date, và gold_type"
+            }, 400
+        
+        # Lưu dữ liệu vào Flask's g object để hàm start_crawl có thể truy cập
+        g.start_date = start_date
+        g.end_date = end_date
+        g.gold_type = gold_type
+        g.callback_url = callback_url
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
 @app.route("/api/start-crawl", methods=["POST"])
+@ai_intent_parser # Khi gọi route này, Python sẽ chạy qua Decorator
 def start_crawl():
-    data = request.json
-    start_date = data.get("start_date")
-    end_date = data.get("end_date")
-    gold_type = data.get("gold_type")
+    # Lấy dữ liệu từ Flask's g object (được set bởi decorator)
+    start_date = g.start_date
+    end_date = g.end_date
+    gold_type = g.gold_type
+    callback_url = g.callback_url
 
-    if not all([start_date, end_date, gold_type]):
-        logging.error("Yêu cầu thiếu start_date, end_date, hoặc gold_type")
-        return {
-            "status": "error",
-            "message": "Yêu cầu không hợp lệ. Cần cung cấp đủ start_date, end_date, và gold_type"
-        }, 400
-
-    thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type))
+    thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type, callback_url))
     thread.start()
 
     return {"status": "accepted", "message": "Crawl task started in background"}
     
-def run_heavy_task(start, end, gold_type):
-    # URL cố định của webhook trên n8n
-    # Container 'crawlgoldapp' có thể gọi container 'n8n' qua tên dịch vụ
-    webhook_url = "http://n8n:5678/webhook/crawl-finished"
+def run_heavy_task(start, end, gold_type, callback_url=None):
+    # Nếu callback_url không được cung cấp, sử dụng URL mặc định
+    if not callback_url:
+        callback_url = "http://n8n:5678/webhook/crawl-finished"
 
     try:
         multi_thread(startDate=start, endDate=end, gold_type=gold_type)
@@ -167,10 +261,10 @@ def run_heavy_task(start, end, gold_type):
             "message": f"Đã cào xong vàng {gold_type} từ {start} đến {end}",
         }
         try:
-            requests.post(webhook_url, json=success_payload, timeout=10)
-            logging.info(f"Successfully sent success callback to {webhook_url}")
+            requests.post(callback_url, json=success_payload, timeout=10)
+            logging.info(f"Successfully sent success callback to {callback_url}")
         except requests.RequestException as e:
-            logging.error(f"Failed to send success callback to n8n: {e}")
+            logging.error(f"Failed to send success callback: {e}")
 
     except Exception as e:
         logging.error(f"An error occurred during the crawl task: {e}")
@@ -180,10 +274,10 @@ def run_heavy_task(start, end, gold_type):
             "message": str(e)
         }
         try:
-            requests.post(webhook_url, json=error_payload, timeout=10)
-            logging.info(f"Successfully sent error callback to {webhook_url}")
+            requests.post(callback_url, json=error_payload, timeout=10)
+            logging.info(f"Successfully sent error callback to {callback_url}")
         except requests.RequestException as callback_error:
-            logging.error(f"Failed to send error callback to n8n: {callback_error}")
+            logging.error(f"Failed to send error callback: {callback_error}")
 
 @app.route("/", methods=["GET"])
 def hello():
