@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  crawlgoldapp:
+    build: .
+    container_name: crawlgold_app
+    ports:
+      - "5000:5000"
+    volumes:
+      # Ánh xạ thư mục 'tables' trong container ra thư mục 'scraped_data' bên ngoài
+      # ĐẢM BẢO data không bị mất khi container được tạo lại
+      - ./scraped_data:/app/tables
+    restart: always
+    networks:
+      - bot_network
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.45.1
+    container_name: n8n_service
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE="Asia/Ho_Chi_Minh"
+      - TZ="Asia/Ho_Chi_Minh"
+      # Biến env này không cần thiết trong các phiên bản new n8n gần đây
+      # - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    volumes:
+      # data n8n được lưu trong named volume 'n8n_data'
+      - n8n_data:/home/node/.n8n
+    restart: always
+    networks:
+      - bot_network
+
+# Khai báo các "named volumes" được dùng ở trên
+volumes:
+  n8n_data: {}
+
+networks:
+  bot_network:
+    driver: bridge

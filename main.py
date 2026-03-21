@@ -3,10 +3,17 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import io
-import csv
 import concurrent.futures
 import os
 import time
+import threading
+import logging
+
+# Cấu hình cơ bản
+logging.basicConfig(
+    level=logging.DEBUG, # Mức độ thấp nhất được ghi lại
+    format='%(asctime)s - %(levelname)s - %(message)s' # Định dạng dòng log
+)
 
 app = Flask(__name__)
 
@@ -91,7 +98,7 @@ def single_day(day,gold_type):
         print(f"{e} Khong co du lieu cho ngay {day}")
 
 
-def multi_thread(gold_type, startDate="2016-03-01", endDate="2026-03-01"):
+def multi_thread(gold_type, startDate, endDate):
     start_time = time.time()
     data_list = pd.date_range(start=startDate,end=endDate, freq='D')
     list_str_days = data_list.strftime('%Y-%m-%d').tolist()
@@ -109,28 +116,80 @@ def multi_thread(gold_type, startDate="2016-03-01", endDate="2026-03-01"):
 
         
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    tables = None
-    error = None
+# @app.route("/", methods=["GET", "POST"])
+# def index():
+#     tables = None
+#     error = None
 
-    if request.method == "POST":
-        url = request.form.get("url", "").strip()
-        parser = request.form.get("parser", "lxml")
-        if not url:
-            error = "Ban chua nhap URL hop le. Vi du: https://example.com"
-        else:
-            df = crawl_data(url=url, parser_type=parser)
-            if df is None:
-                error = "Khong lay duoc bang du lieu. Hay kiem tra URL, parser, hoac ket noi mang."
-            else:
-                tables = [df.to_html(index=False, border=0)]
-                df.to_csv("PipelineScraping/tables/gia_vang.csv",index=False)
-                
+#     if request.method == "POST":
+#         url = request.form.get("url", "").strip()
+#         parser = request.form.get("parser", "lxml")
+#         if not url:
+#             error = "Ban chua nhap URL hop le. Vi du: https://example.com"
+#         else:
+#             df = crawl_data(url=url, parser_type=parser)
+#             if df is None:
+#                 error = "Khong lay duoc bang du lieu. Hay kiem tra URL, parser, hoac ket noi mang."
+#             else:
+#                 tables = [df.to_html(index=False, border=0)]
+#                 df.to_csv("PipelineScraping/tables/gia_vang.csv",index=False)
+#     return render_template("index.html", tables=tables, error=error)
 
-    return render_template("index.html", tables=tables, error=error)
+@app.route("/api/start-crawl", methods=["POST"])
+def start_crawl():
+    data = request.json
+    start_date = data.get("start_date")
+    end_date = data.get("end_date")
+    gold_type = data.get("gold_type")
 
+    if not all([start_date, end_date, gold_type]):
+        logging.error("Yêu cầu thiếu start_date, end_date, hoặc gold_type")
+        return {
+            "status": "error",
+            "message": "Yêu cầu không hợp lệ. Cần cung cấp đủ start_date, end_date, và gold_type"
+        }, 400
+
+    thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type))
+    thread.start()
+
+    return {"status": "accepted", "message": "Crawl task started in background"}
+    
+def run_heavy_task(start, end, gold_type):
+    # URL cố định của webhook trên n8n
+    # Container 'crawlgoldapp' có thể gọi container 'n8n' qua tên dịch vụ
+    webhook_url = "http://n8n:5678/webhook/crawl-finished"
+
+    try:
+        multi_thread(startDate=start, endDate=end, gold_type=gold_type)
+
+        success_payload = {
+            "status": "success",
+            "message": f"Đã cào xong vàng {gold_type} từ {start} đến {end}",
+        }
+        try:
+            requests.post(webhook_url, json=success_payload, timeout=10)
+            logging.info(f"Successfully sent success callback to {webhook_url}")
+        except requests.RequestException as e:
+            logging.error(f"Failed to send success callback to n8n: {e}")
+
+    except Exception as e:
+        logging.error(f"An error occurred during the crawl task: {e}")
+
+        error_payload = {
+            "status": "error",
+            "message": str(e)
+        }
+        try:
+            requests.post(webhook_url, json=error_payload, timeout=10)
+            logging.info(f"Successfully sent error callback to {webhook_url}")
+        except requests.RequestException as callback_error:
+            logging.error(f"Failed to send error callback to n8n: {callback_error}")
+
+@app.route("/", methods=["GET"])
+def hello():
+    return "Hello Roy"
+ 
 if __name__ == '__main__':
     # multi_thread(startDate="2015-03-01",endDate="2025-03-31", gold_type="sjc")
     # print(os.cpu_count())
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
