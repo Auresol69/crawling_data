@@ -246,7 +246,7 @@ def start_crawl():
     thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type, callback_url))
     thread.start()
 
-    return {"status": "accepted", "message": "Crawl task started in background"}
+    return {"status": "accepted", "message": f"Đang cào vàng {gold_type} từ {start_date} đến {end_date}"}
     
 def run_heavy_task(start, end, gold_type, callback_url=None):
     # Nếu callback_url không được cung cấp, sử dụng URL mặc định
@@ -257,6 +257,7 @@ def run_heavy_task(start, end, gold_type, callback_url=None):
         multi_thread(startDate=start, endDate=end, gold_type=gold_type)
 
         success_payload = {
+            "intent": "CAO_VANG",
             "status": "success",
             "message": f"Đã cào xong vàng {gold_type} từ {start} đến {end}",
         }

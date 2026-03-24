@@ -1,36 +1,20 @@
 services:
+  # Crawl app - Đạo dữ liệu vào scraped_data
   crawlgoldapp:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: crawlgold_app
     ports:
       - "5000:5000"
     volumes:
-      # Ánh xạ thư mục 'tables' trong container ra thư mục 'scraped_data' bên ngoài
-      # ĐẢM BẢO data không bị mất khi container được tạo lại
+      # Chia sẻ scraped_data với rag_app
       - ./scraped_data:/app/tables
     restart: always
     networks:
       - bot_network
 
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:1.45.1
-    container_name: n8n_service
-    ports:
-      - "5678:5678"
-    environment:
-      - GENERIC_TIMEZONE="Asia/Ho_Chi_Minh"
-      - TZ="Asia/Ho_Chi_Minh"
-      # Biến env này không cần thiết trong các phiên bản new n8n gần đây
-      # - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - N8N_URL=https://${MY_NGROK_DOMAIN} 
-      - WEBHOOK_URL=https://${MY_NGROK_DOMAIN}
-    volumes:
-      # data n8n được lưu trong named volume 'n8n_data'
-      - n8n_data:/home/node/.n8n
-    restart: always
-    networks:
-      - bot_network
-  
+  # Ollama - LLM service (GPU)
   ollama:
     image: ollama/ollama:latest
     container_name: ollama_service
@@ -51,29 +35,88 @@ services:
     environment:
       - OLLAMA_NUM_GPU=1
       - OLLAMA_KEEP_ALIVE=1m
-    # ollama serve &: Khởi động server Ollama ở chế độ chạy ngầm (background)
-    # ollama pull llama3: tự động tải model llama3 về máy ngay lần đầu tiên bạn chạy hệ thống
-    # wait: "Đừng tắt, hãy đợi đến khi các process ngầm (ollama serve) kết thúc". 
-    # Nếu không có wait, container sẽ chạy xong lệnh pull rồi tự đóng luôn vì nó nghĩ nhiệm vụ đã xong
-    entrypoint: bash -c "ollama serve & sleep 5 && ollama pull llama3 && wait"
+    entrypoint: >
+      bash -c "ollama serve &
+      sleep 5;
+      ollama pull llama3 || echo 'Failed to pull llama3';
+      ollama pull nomic-embed-text || echo 'Failed to pull nomic-embed-text';
+      wait"
 
-  # Ngrok Reverse Proxy - Chỉ proxy 1 service
+  # N8N - Workflow automation
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.45.1
+    container_name: n8n_service
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+      - TZ=Asia/Ho_Chi_Minh
+      - N8N_URL=https://${MY_NGROK_DOMAIN}
+      - WEBHOOK_URL=https://${MY_NGROK_DOMAIN}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: always
+    networks:
+      - bot_network
+
+  # Ngrok Reverse Proxy
   ngrok-proxy:
     image: ngrok/ngrok:latest
     restart: always
+    depends_on:
+      - n8n
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-    command:
+    command: 
       - "http"
-      - "n8n:5678"
-      - "--domain=${MY_NGROK_DOMAIN}"
+      - "http://n8n:5678" # Thêm http:// vào đây cho chắc
+      - "--url=https://${MY_NGROK_DOMAIN}"
     networks:
-      - bot_network  
+      - bot_network
 
-# Khai báo các "named volumes" được dùng ở trên
+  # Router app - Phân luồng request
+  router-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    container_name: router_app
+    ports:
+      - "8080:8080"
+    environment:
+      - CRAWL_SERVICE_URL=http://crawlgoldapp:5000/api/start-crawl
+      - ANALYSIS_SERVICE_URL=http://rag-app:8000/ask
+      - INGEST_SERVICE_URL=http://rag-app:8000/ingest
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - crawlgoldapp
+      - rag-app
+      - ollama
+    networks:
+      - bot_network
+
+  # RAG app - Sử dụng dữ liệu từ crawlgoldapp
+  rag-app:
+    build:
+      context: ../../RAG/RAG_Python
+      dockerfile: Dockerfile
+    container_name: rag_python_app
+    volumes:
+      # Chia sẻ cùng folder scraped_data
+      - ./scraped_data:/app/datas
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - ollama
+    tty: true
+    stdin_open: true
+    networks:
+      - bot_network
+
+# Named volumes cho data persistence
 volumes:
-  n8n_data: {}
-  ollama: {}
+  n8n_data: {}         # Dữ liệu N8N workflows
+  ollama: {}           # Model LLM cache
 
 networks:
   bot_network:

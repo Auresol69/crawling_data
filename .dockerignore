@@ -4,3 +4,4 @@ templates
 Makefile
 .env
 scraped_data
+__pycache__
