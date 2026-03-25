@@ -9,7 +9,7 @@ services:
       - "5000:5000"
     volumes:
       # Chia sẻ scraped_data với rag_app
-      - ./scraped_data:/app/tables
+      - ./scraped_data:/app/datas
     restart: always
     networks:
       - bot_network
@@ -53,6 +53,8 @@ services:
       - TZ=Asia/Ho_Chi_Minh
       - N8N_URL=https://${MY_NGROK_DOMAIN}
       - WEBHOOK_URL=https://${MY_NGROK_DOMAIN}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_USER_MANAGEMENT_JWT_SECRET=${N8N_USER_MANAGEMENT_JWT_SECRET}
     volumes:
       - n8n_data:/home/node/.n8n
     restart: always

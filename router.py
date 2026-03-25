@@ -7,13 +7,19 @@ import requests
 import json
 import uvicorn
 from datetime import datetime
+import logging
 
 app = FastAPI(title="Gold CRAWL API", version="1.0.0")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class RouteRequest(BaseModel):
     text: str
     callback_url: Optional[str] = None
+    chat_id: str
 
 
 CRAWL_SERVICE_URL = os.getenv("CRAWL_SERVICE_URL", "http://crawlgoldapp:5000")
@@ -30,19 +36,25 @@ def get_intent_from_ollama(text: str):
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     prompt = f"""
-Bạn là một trợ lý ảo phân luồng dữ liệu. Nhiệm vụ của bạn là đọc tin nhắn, xác định ý định (intent) và trích xuất thành ĐÚNG MỘT object JSON. KHÔNG giải thích thêm. 
+Bạn là một trợ lý ảo phân luồng dữ liệu thông minh. Nhiệm vụ của bạn là đọc tin nhắn và trích xuất thành ĐÚNG MỘT object JSON. 
 Hôm nay là ngày {today_str}.
 
-Quy tắc phân loại và cấu trúc JSON:
+QUY TẮC PHÂN LOẠI (Dựa trên động từ và mục đích):
 
-1. PHAN_TICH: Dùng khi người dùng có từ khóa "phân tích", "hỏi", "xem", "tổng hợp". Nếu người dùng nhắc đến ngày tháng, hãy gom nó vào câu hỏi.
-{{"intent": "PHAN_TICH", "payload": {{"question": "<Câu hỏi hoàn chỉnh của user>", "gold_type": "<sjc, nhẫn, doji...>"}}}}
+1. CAO_VANG: Khi người dùng muốn thực hiện hành động thu thập dữ liệu từ web. 
+   - Từ khóa: "cào", "quét", "crawl", "lấy dữ liệu mới", "update giá".
+   - Bất kể có thời gian hay không, cứ muốn "Cào/Quét" là vào đây.
+   - JSON: {{"intent": "CAO_VANG", "payload": {{"user_input": "{text}", "gold_type": "<sjc, nhẫn...>"}}}}
 
-2. NAP_DATA: Dùng khi người dùng ra lệnh "nạp", "lấy" VÀ có đề cập đến thời gian (từ ngày nào đến ngày nào, x ngày qua, tháng trước). BẠN PHẢI TỰ TÍNH TOÁN để suy ra định dạng YYYY-MM-DD. (Ví dụ: "2 tuần qua" thì start_date là 14 ngày trước so với hôm nay).
-{{"intent": "NAP_DATA", "payload": {{"start_date": "<YYYY-MM-DD>", "end_date": "<YYYY-MM-DD>", "gold_type": "<Loại vàng>"}}}}
+2. NAP_DATA: Khi người dùng muốn đưa dữ liệu vào hệ thống lưu trữ/database.
+   - Từ khóa: "nạp", "lưu", "import", "ghi vào máy".
+   - Yêu cầu: Bạn phải tính toán start_date và end_date (YYYY-MM-DD) dựa trên thời gian user nhắc tới.
+   - Nếu không đề cập loại vàng, mặc định "sjc".
+   - JSON: {{"intent": "NAP_DATA", "payload": {{"start_date": "<YYYY-MM-DD>", "end_date": "<YYYY-MM-DD>", "gold_type": "<sjc hoặc loại khác>"}}}}
 
-3. CAO_VANG: CHỈ dùng khi người dùng ra lệnh cào dữ liệu chung chung mà HOÀN TOÀN KHÔNG đề cập đến bất kỳ mốc thời gian nào.
-{{"intent": "CAO_VANG", "payload": {{"user_input": "<Nguyên văn câu lệnh>"}}}}
+3. PHAN_TICH: Khi người dùng muốn đặt câu hỏi hoặc xem nhận định về dữ liệu đã có.
+   - Từ khóa: "phân tích", "hỏi", "xem", "tổng hợp", "so sánh", "dự báo".
+   - JSON: {{"intent": "PHAN_TICH", "payload": {{"question": "{text}", "gold_type": "..."}}}}
 
 ---
 Tin nhắn người dùng: "{text}"
@@ -59,10 +71,20 @@ Tin nhắn người dùng: "{text}"
 
 @app.post("/router")
 def route_message(req: RouteRequest):
+    logger.info(f"Received request for chat_id: {req.chat_id} with text: '{req.text}', callback_url: {req.callback_url}")
     try:
         result = get_intent_from_ollama(req.text)
         intent = result.get("intent")
         payload = result.get("payload", {})
+        payload["chat_id"] = req.chat_id
+        
+        # Ensure gold_type is lowercase for consistency
+        if "gold_type" in payload:
+            payload["gold_type"] = payload["gold_type"].lower()
+
+
+        logging.info(payload)
+        logger.info(f"Intent classified as: {intent}")
     
         if intent == "PHAN_TICH":
             response = requests.post(ANALYSIS_SERVICE_URL, json=payload, timeout=60)

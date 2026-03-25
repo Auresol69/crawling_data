@@ -93,7 +93,7 @@ def single_day(day,gold_type):
         if df is not None and not df.empty:
             logging.info(f"Got data for {day}, shape: {df.shape}")
             y, m, d = day.split('-')
-            folder_path = f"/app/tables/{gold_type}/{y}/{m}"
+            folder_path = f"/app/datas/{gold_type}/{y}/{m}"
             
             logging.info(f"Creating folder: {folder_path}")
             os.makedirs(folder_path, exist_ok=True)
@@ -217,6 +217,7 @@ def ai_intent_parser(f):
         end_date = data.get("end_date")
         gold_type = data.get("gold_type")
         callback_url = data.get("callback_url")
+        chat_id = data.get("chat_id")
 
         if not all([start_date, end_date, gold_type]):
             logging.error("Yêu cầu thiếu start_date, end_date, hoặc gold_type")
@@ -230,6 +231,7 @@ def ai_intent_parser(f):
         g.end_date = end_date
         g.gold_type = gold_type
         g.callback_url = callback_url
+        g.chat_id = chat_id
         
         return f(*args, **kwargs)
     return decorated_function
@@ -242,13 +244,14 @@ def start_crawl():
     end_date = g.end_date
     gold_type = g.gold_type
     callback_url = g.callback_url
+    chat_id = g.chat_id
 
-    thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type, callback_url))
+    thread = threading.Thread(target=run_heavy_task, args=(start_date, end_date, gold_type, callback_url, chat_id))
     thread.start()
 
     return {"status": "accepted", "message": f"Đang cào vàng {gold_type} từ {start_date} đến {end_date}"}
     
-def run_heavy_task(start, end, gold_type, callback_url=None):
+def run_heavy_task(start, end, gold_type, callback_url=None, chat_id=None):
     # Nếu callback_url không được cung cấp, sử dụng URL mặc định
     if not callback_url:
         callback_url = "http://n8n:5678/webhook/crawl-finished"
@@ -257,7 +260,7 @@ def run_heavy_task(start, end, gold_type, callback_url=None):
         multi_thread(startDate=start, endDate=end, gold_type=gold_type)
 
         success_payload = {
-            "intent": "CAO_VANG",
+            "chat_id": chat_id,
             "status": "success",
             "message": f"Đã cào xong vàng {gold_type} từ {start} đến {end}",
         }
@@ -271,6 +274,7 @@ def run_heavy_task(start, end, gold_type, callback_url=None):
         logging.error(f"An error occurred during the crawl task: {e}")
 
         error_payload = {
+            "chat_id": chat_id,
             "status": "error",
             "message": str(e)
         }
